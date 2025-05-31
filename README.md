@@ -56,8 +56,8 @@ Google スプレッドシートを作成し、GASプロジェクトと関連付�
 
 ### 2. Connpass APIキーの取得
 
-1. [Connpass](https://connpass.com/) にログイン
-2. APIキーを取得（詳細は Connpass の API ドキュメントを参照）
+1. [connpassのAPI利用について — connpassご利用ガイド ドキュメント](https://help.connpass.com/api/#id4)を参照し、利用申請フォームより申し込み
+2. 申請結果メールからAPIキーを取得
 3. 取得したAPIキーをスプレッドシートのB2セルに入力
 
 ### 3. LINE Messaging APIの設定
