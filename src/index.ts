@@ -14,17 +14,14 @@
  * limitations under the License.
  */
 
-// --- 定数定義 ---
-const CONNPASS_API_BASE_URL = 'https://connpass.com/api/v2/events/';
-const MAX_EVENTS_PER_MESSAGE = 5;
-const MAX_KNOWN_EVENT_IDS = 1000;
-const API_CALL_DELAY = 1000;
-
-const SPREADSHEET_COLUMNS = {
-  KEYWORDS: 1, // A列: キーワード
-  CONNPASS_API_KEY: 2, // B列: Connpass APIキー
-  LINE_CHANNEL_ACCESS_TOKEN: 3, // C列: LINE Channel Access Token
-} as const;
+import {
+  API_CALL_DELAY,
+  CONNPASS_API_BASE_URL,
+  EVENT_SHEET_COLUMNS,
+  MAX_EVENTS_PER_MESSAGE,
+  SPREADSHEET_COLUMNS,
+  TIME_FILTERING,
+} from './env';
 
 // --- 型定義 ---
 interface ConnpassEvent {
@@ -148,7 +145,18 @@ function searchConnpassEvents(
     }
 
     const json: ConnpassApiResponse = JSON.parse(response.getContentText());
-    return json.events || [];
+    const events = json.events || [];
+
+    // デバッグ: 最初の数件のイベントIDの形式を確認
+    if (events.length > 0) {
+      events.slice(0, 3).forEach((event, index) => {
+        console.log(
+          `イベント${index + 1}: ID=${event.event_id} (型: ${typeof event.event_id}), タイトル="${event.title}"`
+        );
+      });
+    }
+
+    return events;
   } catch (error) {
     console.error(`Connpass API検索エラー (キーワード: ${keyword}):`, error);
     throw error;
@@ -218,7 +226,7 @@ function formatEventMessage(event: ConnpassEvent): string {
   const startDate = new Date(event.started_at);
   const formattedDate = Utilities.formatDate(
     startDate,
-    'Asia/Tokyo',
+    TIME_FILTERING.TIMEZONE,
     'yyyy/MM/dd HH:mm'
   );
 
@@ -241,10 +249,12 @@ function formatEventMessage(event: ConnpassEvent): string {
 // --- 過去1時間以内に更新されたイベントをフィルタリング ---
 function filterRecentlyUpdatedEvents(events: ConnpassEvent[]): ConnpassEvent[] {
   const now = new Date();
-  const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000); // 1時間前
+  const oneHourAgo = new Date(
+    now.getTime() - TIME_FILTERING.RECENT_HOURS * 60 * 60 * 1000
+  );
 
   console.log(
-    `フィルタリング基準時間: ${Utilities.formatDate(oneHourAgo, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss')} 〜 ${Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss')}`
+    `フィルタリング基準時間: ${Utilities.formatDate(oneHourAgo, TIME_FILTERING.TIMEZONE, 'yyyy/MM/dd HH:mm:ss')} 〜 ${Utilities.formatDate(now, TIME_FILTERING.TIMEZONE, 'yyyy/MM/dd HH:mm:ss')}`
   );
 
   const filteredEvents = events.filter(event => {
@@ -288,24 +298,128 @@ function formatMultipleEvents(
   return message;
 }
 
-// --- 新規イベント判定・ID管理 ---
-function isNewEvent(eventId: number): boolean {
-  const props = PropertiesService.getScriptProperties();
-  const known = props.getProperty('knownEventIds');
-  const knownIds = known ? known.split(',').map(Number) : [];
+// --- 年月シート管理 ---
+function getCurrentYearMonthSheetName(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  return `${year}${month}`;
+}
 
-  if (knownIds.includes(eventId)) {
-    return false;
+function createOrGetYearMonthSheet(): GoogleAppsScript.Spreadsheet.Sheet {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetName = getCurrentYearMonthSheetName();
+
+  let sheet = spreadsheet.getSheetByName(sheetName);
+
+  if (!sheet) {
+    // シートが存在しない場合は作成
+    sheet = spreadsheet.insertSheet(sheetName);
+
+    // ヘッダー行を設定
+    sheet.getRange(1, EVENT_SHEET_COLUMNS.TITLE).setValue('タイトル');
+    sheet.getRange(1, EVENT_SHEET_COLUMNS.START_DATE).setValue('開催日時');
+    sheet.getRange(1, EVENT_SHEET_COLUMNS.URL).setValue('URL');
+    sheet.getRange(1, EVENT_SHEET_COLUMNS.NOTIFIED_DATE).setValue('通知日時');
+    sheet.getRange(1, EVENT_SHEET_COLUMNS.KEYWORD).setValue('検索キーワード');
+
+    // ヘッダー行の書式設定
+    const headerRange = sheet.getRange(1, 1, 1, 5);
+    headerRange.setFontWeight('bold');
+    headerRange.setBackground('#e8f0fe');
+    headerRange.setBorder(true, true, true, true, true, true);
+
+    // 列幅の自動調整
+    sheet.autoResizeColumns(1, 5);
+
+    console.log(`年月シート "${sheetName}" を作成しました`);
   }
 
-  knownIds.push(eventId);
-  // 保存するIDの数を制限（最新1000件まで）
-  if (knownIds.length > MAX_KNOWN_EVENT_IDS) {
-    knownIds.splice(0, knownIds.length - MAX_KNOWN_EVENT_IDS);
+  return sheet;
+}
+
+function isEventAlreadyNotified(
+  eventUrl: string,
+  sheet: GoogleAppsScript.Spreadsheet.Sheet
+): boolean {
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) {
+    return false; // ヘッダー行のみの場合
   }
 
-  props.setProperty('knownEventIds', knownIds.join(','));
-  return true;
+  // C列のURLを検索
+  const eventUrls = sheet
+    .getRange(2, EVENT_SHEET_COLUMNS.URL, lastRow - 1, 1)
+    .getValues();
+
+  console.log(
+    `既存イベントURL検索: 対象URL=${eventUrl}, 既存レコード数=${eventUrls.length}`
+  );
+
+  for (let i = 0; i < eventUrls.length; i++) {
+    const existingUrl = String(eventUrls[i][0]).trim();
+    const targetUrl = String(eventUrl).trim();
+
+    if (existingUrl === targetUrl) {
+      console.log(`既存イベント発見: "${existingUrl}"`);
+      return true;
+    }
+
+    // デバッグ用：一致しなかった場合（最初の3件のみ）
+    if (i < 3) {
+      console.log(
+        `URL比較: 既存="${existingUrl}" vs 対象="${targetUrl}" -> 不一致`
+      );
+    }
+  }
+
+  console.log(`新規イベント: URL=${eventUrl}`);
+  return false;
+}
+
+function addEventToSheet(
+  event: ConnpassEvent,
+  keyword: string,
+  sheet: GoogleAppsScript.Spreadsheet.Sheet
+): void {
+  const lastRow = sheet.getLastRow();
+  const newRow = lastRow + 1;
+
+  const now = new Date();
+  const startDate = new Date(event.started_at);
+
+  // デバッグ用ログ
+  console.log(
+    `シートにイベントを追記中: URL=${event.url}, タイトル="${event.title}"`
+  );
+  console.log(`追記先行番号: ${newRow}`);
+
+  // イベント情報を追記
+  sheet.getRange(newRow, EVENT_SHEET_COLUMNS.TITLE).setValue(event.title);
+  sheet
+    .getRange(newRow, EVENT_SHEET_COLUMNS.START_DATE)
+    .setValue(
+      Utilities.formatDate(
+        startDate,
+        TIME_FILTERING.TIMEZONE,
+        'yyyy/MM/dd HH:mm'
+      )
+    );
+  sheet.getRange(newRow, EVENT_SHEET_COLUMNS.URL).setValue(event.url);
+  sheet
+    .getRange(newRow, EVENT_SHEET_COLUMNS.NOTIFIED_DATE)
+    .setValue(
+      Utilities.formatDate(now, TIME_FILTERING.TIMEZONE, 'yyyy/MM/dd HH:mm:ss')
+    );
+  sheet.getRange(newRow, EVENT_SHEET_COLUMNS.KEYWORD).setValue(keyword);
+
+  // 枠線を設定
+  const rowRange = sheet.getRange(newRow, 1, 1, 5);
+  rowRange.setBorder(true, true, true, true, true, true);
+
+  console.log(
+    `イベント "${event.title}" (URL: ${event.url}) をシートの${newRow}行目に追記しました`
+  );
 }
 
 // --- メインの実行関数 ---
@@ -317,7 +431,12 @@ function main(): void {
     const config = getConfigFromSheet();
     console.log(`取得したキーワード数: ${config.keywords.length}`);
 
+    // 年月シートを取得または作成
+    const eventSheet = createOrGetYearMonthSheet();
+    console.log(`年月シート "${getCurrentYearMonthSheetName()}" を使用します`);
+
     let totalNewEvents = 0;
+    let totalAlreadyNotified = 0;
 
     // 各キーワードで検索
     config.keywords.forEach((keyword, index) => {
@@ -337,11 +456,46 @@ function main(): void {
           `"${keyword}" で ${recentlyUpdatedEvents.length}件の過去1時間以内に更新されたイベントが見つかりました`
         );
 
-        // 新規イベントのみフィルタリング（既に過去1時間以内に更新されたイベントから）
-        const newEvents = recentlyUpdatedEvents.filter(event =>
-          isNewEvent(event.event_id)
-        );
+        // 新規イベントと既通知イベントを分類
+        const newEvents: ConnpassEvent[] = [];
+        const alreadyNotifiedEvents: ConnpassEvent[] = [];
 
+        recentlyUpdatedEvents.forEach(event => {
+          if (isEventAlreadyNotified(event.url, eventSheet)) {
+            alreadyNotifiedEvents.push(event);
+          } else {
+            newEvents.push(event);
+          }
+        });
+
+        // 既に通知済みのイベントがある場合
+        if (alreadyNotifiedEvents.length > 0) {
+          console.log(
+            `"${keyword}" で ${alreadyNotifiedEvents.length}件の既通知済みイベントが見つかりました`
+          );
+
+          // 既通知済みイベントの詳細をログに出力（LINE送信はしない）
+          alreadyNotifiedEvents
+            .slice(0, MAX_EVENTS_PER_MESSAGE)
+            .forEach((event, index) => {
+              console.log(
+                `  既通知済み ${index + 1}: "${event.title}" - ${event.url}`
+              );
+            });
+
+          if (alreadyNotifiedEvents.length > MAX_EVENTS_PER_MESSAGE) {
+            console.log(
+              `  他 ${alreadyNotifiedEvents.length - MAX_EVENTS_PER_MESSAGE}件の既通知済みイベントがあります`
+            );
+          }
+
+          console.log(
+            '既通知済みイベントはLINE送信せず、カウントのみ行いました'
+          );
+          totalAlreadyNotified += alreadyNotifiedEvents.length;
+        }
+
+        // 新規イベントがある場合
         if (newEvents.length > 0) {
           console.log(
             `"${keyword}" で ${newEvents.length}件の新規イベントが見つかりました`
@@ -351,8 +505,13 @@ function main(): void {
           const message = formatMultipleEvents(newEvents, keyword);
           sendLineMessage(message, config.lineChannelAccessToken);
 
+          // シートにイベントを追記
+          newEvents.forEach(event => {
+            addEventToSheet(event, keyword, eventSheet);
+          });
+
           totalNewEvents += newEvents.length;
-        } else {
+        } else if (alreadyNotifiedEvents.length === 0) {
           console.log(`"${keyword}" で新規イベントはありませんでした`);
         }
 
@@ -367,36 +526,26 @@ function main(): void {
       }
     });
 
-    if (totalNewEvents === 0) {
-      // 新規イベントがない場合はメッセージを送信せず、ログのみ出力
-      const message =
+    // 結果のメッセージを作成
+    let resultMessage = '';
+    if (totalNewEvents === 0 && totalAlreadyNotified === 0) {
+      resultMessage =
         '過去1時間以内に更新された新しいイベントは見つかりませんでした。LINEメッセージは送信しません。';
-      console.log(message);
-
-      // スプレッドシートのUIにもメッセージを表示
-      try {
-        const ui = SpreadsheetApp.getUi();
-        ui.alert('検索結果', message, ui.ButtonSet.OK);
-      } catch (uiError) {
-        console.log(
-          'UI表示エラー（スクリプトエディタから実行された可能性があります）:',
-          uiError
-        );
-      }
     } else {
-      // 新規イベントがあった場合もUIに結果を表示
-      const message = `処理完了: 合計 ${totalNewEvents}件の新規イベントを通知しました`;
-      console.log(message);
+      resultMessage = `処理完了: 新規イベント ${totalNewEvents}件を通知、既通知済みイベント ${totalAlreadyNotified}件を確認しました`;
+    }
 
-      try {
-        const ui = SpreadsheetApp.getUi();
-        ui.alert('検索結果', message, ui.ButtonSet.OK);
-      } catch (uiError) {
-        console.log(
-          'UI表示エラー（スクリプトエディタから実行された可能性があります）:',
-          uiError
-        );
-      }
+    console.log(resultMessage);
+
+    // スプレッドシートのUIにも結果を表示
+    try {
+      const ui = SpreadsheetApp.getUi();
+      ui.alert('検索結果', resultMessage, ui.ButtonSet.OK);
+    } catch (uiError) {
+      console.log(
+        'UI表示エラー（スクリプトエディタから実行された可能性があります）:',
+        uiError
+      );
     }
   } catch (error) {
     console.error('メイン処理でエラーが発生しました:', error);
@@ -444,9 +593,17 @@ function validateLineToken(token: string): {
   return { isValid: true, message: 'トークン形式は正常です' };
 }
 
-// --- テスト用関数 ---
-function testConnection(): void {
+// --- 統合テスト関数 ---
+function testEvents(
+  maxEvents: number = 5,
+  sendTestMessage: boolean = true
+): void {
   try {
+    console.log(
+      `統合テストを開始します（処理件数: ${maxEvents}件、テストメッセージ: ${sendTestMessage ? 'あり' : 'なし'}）...`
+    );
+
+    // 1. 設定情報の検証
     const config = getConfigFromSheet();
     console.log('設定情報の取得に成功しました');
     console.log(`キーワード数: ${config.keywords.length}`);
@@ -463,10 +620,6 @@ function testConnection(): void {
         ? config.lineChannelAccessToken.length
         : 'undefined'
     );
-    console.log(
-      `LINE Channel Access Token value check:`,
-      config.lineChannelAccessToken ? 'CUSTOM VALUE' : 'EMPTY'
-    );
 
     // LINE Channel Access Tokenの詳細チェック
     const tokenValidation = validateLineToken(config.lineChannelAccessToken);
@@ -481,13 +634,19 @@ function testConnection(): void {
       );
     }
 
-    // テストメッセージを送信
-    const testMessage =
-      '🧪 GAS Connpassイベント検索アプリのテストメッセージです。';
-    sendLineMessage(testMessage, config.lineChannelAccessToken);
-    console.log('テストメッセージの送信に成功しました');
+    // 2. 年月シートの準備
+    const eventSheet = createOrGetYearMonthSheet();
+    console.log(`年月シート "${getCurrentYearMonthSheetName()}" を使用します`);
 
-    // 実際の検索結果も送信（時間フィルタリングなし）
+    // 3. テストメッセージ送信（オプション）
+    if (sendTestMessage) {
+      const testMessage =
+        '🧪 GAS Connpassイベント検索アプリのテストメッセージです。';
+      sendLineMessage(testMessage, config.lineChannelAccessToken);
+      console.log('テストメッセージの送信に成功しました');
+    }
+
+    // 4. 検索とイベント処理
     const keyword = config.keywords[0];
     console.log(`テスト検索キーワード: "${keyword}"`);
 
@@ -495,41 +654,110 @@ function testConnection(): void {
     console.log(`"${keyword}" で ${events.length}件のイベントが見つかりました`);
 
     if (events.length > 0) {
-      // 時間フィルタリングなしで結果を送信
-      let searchResultMessage = `🔍 「${keyword}」の検索結果 (全件: ${events.length}件)\n\n`;
+      // 指定件数分のイベントを処理
+      const testEvents = events.slice(0, Math.min(events.length, maxEvents));
+      console.log(`テスト対象イベント: ${testEvents.length}件`);
 
-      events.slice(0, MAX_EVENTS_PER_MESSAGE).forEach((event, index) => {
-        searchResultMessage += `${index + 1}. ${formatEventMessage(event)}`;
-        if (index < Math.min(events.length - 1, MAX_EVENTS_PER_MESSAGE - 1)) {
-          searchResultMessage += '\n\n';
+      // 新規イベントと既通知イベントを分類
+      const newEvents: ConnpassEvent[] = [];
+      const alreadyNotifiedEvents: ConnpassEvent[] = [];
+
+      testEvents.forEach((event, index) => {
+        console.log(
+          `イベント ${index + 1}/${testEvents.length}: ID=${event.event_id}, タイトル="${event.title}"`
+        );
+        console.log(`更新日時: ${event.updated_at}`);
+
+        if (isEventAlreadyNotified(event.url, eventSheet)) {
+          console.log(`  → 既通知済み`);
+          alreadyNotifiedEvents.push(event);
+        } else {
+          console.log(`  → 新規イベント`);
+          newEvents.push(event);
         }
       });
 
-      if (events.length > MAX_EVENTS_PER_MESSAGE) {
-        searchResultMessage += `\n\n他 ${events.length - MAX_EVENTS_PER_MESSAGE}件のイベントがあります。`;
+      // 新規イベントの処理
+      if (newEvents.length > 0) {
+        console.log(`${newEvents.length}件の新規イベントを処理します`);
+
+        // LINE送信用メッセージを作成
+        let searchResultMessage = `🔍 「${keyword}」のテスト検索結果 (新規: ${newEvents.length}件)\n\n`;
+
+        newEvents.forEach((event, index) => {
+          searchResultMessage += `${index + 1}. ${formatEventMessage(event)}`;
+          if (index < newEvents.length - 1) {
+            searchResultMessage += '\n\n';
+          }
+        });
+
+        sendLineMessage(searchResultMessage, config.lineChannelAccessToken);
+        console.log('新規イベントの検索結果を送信しました');
+
+        // シートにイベントを追記
+        newEvents.forEach((event, index) => {
+          console.log(
+            `新規イベント ${index + 1}/${newEvents.length} をシートに追記中...`
+          );
+          addEventToSheet(event, keyword, eventSheet);
+        });
       }
 
-      sendLineMessage(searchResultMessage, config.lineChannelAccessToken);
-      console.log('検索結果の送信に成功しました');
+      // 既通知済みイベントの処理
+      if (alreadyNotifiedEvents.length > 0) {
+        console.log(
+          `${alreadyNotifiedEvents.length}件の既通知済みイベントが見つかりました`
+        );
+
+        // 既通知済みイベントの詳細をログに出力（LINE送信はしない）
+        alreadyNotifiedEvents.forEach((event, index) => {
+          console.log(
+            `  既通知済み ${index + 1}: "${event.title}" - ${event.url}`
+          );
+        });
+
+        console.log('既通知済みイベントはLINE送信せず、ログ出力のみ行いました');
+      }
+
+      // 結果サマリー
+      const summaryMessage = `テスト完了: 新規追加 ${newEvents.length}件、既通知済み ${alreadyNotifiedEvents.length}件`;
+      console.log(summaryMessage);
+
+      // UIアラート表示
+      try {
+        const ui = SpreadsheetApp.getUi();
+        const resultMessage =
+          `統合テスト完了\n` +
+          `検索結果: ${events.length}件\n` +
+          `処理対象: ${testEvents.length}件\n` +
+          `新規追加: ${newEvents.length}件\n` +
+          `既通知済み: ${alreadyNotifiedEvents.length}件\n` +
+          `年月シート: "${getCurrentYearMonthSheetName()}"`;
+        ui.alert('統合テスト結果', resultMessage, ui.ButtonSet.OK);
+      } catch (uiError) {
+        console.log(
+          'UI表示エラー（スクリプトエディタから実行された可能性があります）:',
+          uiError
+        );
+      }
     } else {
       const noResultMessage = `🔍 「${keyword}」の検索結果: イベントが見つかりませんでした。`;
       sendLineMessage(noResultMessage, config.lineChannelAccessToken);
       console.log('検索結果なしメッセージの送信に成功しました');
-    }
 
-    // スプレッドシートのUIにも結果を表示
-    try {
-      const ui = SpreadsheetApp.getUi();
-      const resultMessage = `接続テスト完了\nテストメッセージと検索結果（${events.length}件）を送信しました`;
-      ui.alert('接続テスト結果', resultMessage, ui.ButtonSet.OK);
-    } catch (uiError) {
-      console.log(
-        'UI表示エラー（スクリプトエディタから実行された可能性があります）:',
-        uiError
-      );
+      try {
+        const ui = SpreadsheetApp.getUi();
+        ui.alert(
+          '統合テスト結果',
+          `検索結果が見つかりませんでした（キーワード: ${keyword}）`,
+          ui.ButtonSet.OK
+        );
+      } catch (uiError) {
+        console.log('UI表示エラー:', uiError);
+      }
     }
   } catch (error) {
-    console.error('接続テストでエラーが発生しました:', error);
+    console.error('統合テストでエラーが発生しました:', error);
     throw error;
   }
 }
@@ -537,7 +765,14 @@ function testConnection(): void {
 // --- スプレッドシート初期化関数 ---
 function initializeSpreadsheet(): void {
   try {
-    const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = spreadsheet.getActiveSheet();
+
+    // シート名を「プロパティ」に変更（Sheet1の場合のみ）
+    if (sheet.getName() === 'Sheet1' || sheet.getName().startsWith('シート')) {
+      sheet.setName('プロパティ');
+      console.log('シート名を「プロパティ」に変更しました');
+    }
 
     // シートをクリア
     sheet.clear();
@@ -596,7 +831,14 @@ function initializeSpreadsheet(): void {
 // --- スプレッドシート自動初期化（onOpen時に実行） ---
 function onOpen(): void {
   try {
-    const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = spreadsheet.getActiveSheet();
+
+    // シート名を「プロパティ」に変更（Sheet1の場合のみ）
+    if (sheet.getName() === 'Sheet1' || sheet.getName().startsWith('シート')) {
+      sheet.setName('プロパティ');
+      console.log('シート名を「プロパティ」に変更しました');
+    }
 
     // シートが空の場合のみ初期化
     if (sheet.getLastRow() === 0 || sheet.getRange(1, 1).getValue() === '') {
@@ -608,8 +850,8 @@ function onOpen(): void {
     const ui = SpreadsheetApp.getUi();
     ui.createMenu('Connpassイベント検索')
       .addItem('設定を初期化', 'initializeSpreadsheet')
-      .addItem('検索結果送付テスト', 'testConnection')
-      .addItem('検索結果フィルタリングテスト', 'main')
+      .addItem('接続・動作確認テスト', 'testEvents')
+      .addItem('過去1時間以内イベント検索', 'main')
       .addToUi();
   } catch (error) {
     console.error('onOpen実行エラー:', error);

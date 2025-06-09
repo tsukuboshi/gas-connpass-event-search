@@ -16,7 +16,7 @@
     "prettier/prettier": "error",
     "@typescript-eslint/no-floating-promises": "off",
     "@typescript-eslint/no-unused-vars": ["error", {
-      "varsIgnorePattern": "^(main|testConnection|onOpen|initializeSpreadsheet|testTimeFiltering|filterRecentlyUpdatedEvents)$"
+      "varsIgnorePattern": "^(main|testEvents|onOpen|initializeSpreadsheet|filterRecentlyUpdatedEvents)$"
     }]
   },
   "ignorePatterns": ["template/**/*", "template-ui/**/*"]

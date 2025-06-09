@@ -48,11 +48,33 @@ export const API_CALL_DELAY = 1000;
 export const SPREADSHEET_COLUMNS = {
   KEYWORDS: 1, // A列: キーワード
   CONNPASS_API_KEY: 2, // B列: Connpass APIキー
-  LINE_TOKEN: 3, // C列: LINE Token
+  LINE_CHANNEL_ACCESS_TOKEN: 3, // C列: LINE Channel Access Token
+} as const;
+
+// 年月シートの列定義
+export const EVENT_SHEET_COLUMNS = {
+  TITLE: 1, // A列: タイトル
+  START_DATE: 2, // B列: 開催日時
+  URL: 3, // C列: URL
+  NOTIFIED_DATE: 4, // D列: 通知日時
+  KEYWORD: 5, // E列: 検索キーワード
 } as const;
 
 // スプレッドシートの行定義
 export const SPREADSHEET_ROWS = {
   CONFIG_ROW: 1, // 1行目: 設定情報
   KEYWORDS_START: 2, // 2行目以降: キーワード
+} as const;
+
+// 年月シート設定
+export const YEAR_MONTH_SHEET = {
+  NAME_FORMAT: 'YYYYMM', // シート名の形式
+  HEADER_ROW: 1, // ヘッダー行
+  DATA_START_ROW: 2, // データ開始行
+} as const;
+
+// 時間フィルタリング設定
+export const TIME_FILTERING = {
+  RECENT_HOURS: 1, // 過去何時間以内のイベントを対象とするか
+  TIMEZONE: 'Asia/Tokyo', // タイムゾーン
 } as const;
