@@ -39,7 +39,7 @@ export const LINE_API_BASE_URL = 'https://api.line.me/v2/bot/message/broadcast';
 export const MAX_EVENTS_PER_MESSAGE = 5;
 
 // 検索キーワードの最大数
-export const MAX_RESEARCH_KEYWORDS = 3;
+export const MAX_RESEARCH_KEYWORDS = 2;
 
 // 保存する既知のイベントIDの最大数
 export const MAX_KNOWN_EVENT_IDS = 1000;
