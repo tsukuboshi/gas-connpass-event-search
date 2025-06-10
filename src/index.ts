@@ -19,6 +19,7 @@ import {
   CONNPASS_API_BASE_URL,
   EVENT_SHEET_COLUMNS,
   MAX_EVENTS_PER_MESSAGE,
+  MAX_RESEARCH_KEYWORDS,
   SPREADSHEET_COLUMNS,
   TIME_FILTERING,
 } from './env';
@@ -77,11 +78,20 @@ function getConfigFromSheet(): SpreadsheetConfig {
     .getRange(2, SPREADSHEET_COLUMNS.LINE_CHANNEL_ACCESS_TOKEN)
     .getValue();
 
-  // C2: キーワード
-  const keywordRaw = sheet.getRange(2, SPREADSHEET_COLUMNS.KEYWORDS).getValue();
+  // C2以降: 検索キーワード
+  const keywords: string[] = [];
+  for (let i = 0; i < MAX_RESEARCH_KEYWORDS; i++) {
+    const keywordRaw = sheet
+      .getRange(2, SPREADSHEET_COLUMNS.KEYWORDS_START + i)
+      .getValue();
+
+    const keyword = keywordRaw ? keywordRaw.toString().trim() : '';
+    if (keyword && keyword !== '') {
+      keywords.push(keyword);
+    }
+  }
 
   // 値のクリーニング
-  const keyword = keywordRaw ? keywordRaw.toString().trim() : '';
   const connpassApiKey = connpassApiKeyRaw
     ? String(connpassApiKeyRaw)
         .trim()
@@ -93,7 +103,7 @@ function getConfigFromSheet(): SpreadsheetConfig {
         .replace(/[\r\n]/g, '')
     : '';
 
-  console.log('Cleaned keyword:', keyword);
+  console.log('取得したキーワード:', keywords);
   console.log('Cleaned Connpass API Key length:', connpassApiKey.length);
   console.log(
     'Cleaned LINE Channel Access Token length:',
@@ -109,12 +119,14 @@ function getConfigFromSheet(): SpreadsheetConfig {
     throw new Error('LINE Channel Access Tokenが設定されていません（B2セル）');
   }
 
-  if (!keyword || keyword === '') {
-    throw new Error('検索キーワードが設定されていません（C2セル）');
+  if (keywords.length === 0) {
+    throw new Error(
+      `検索キーワードが設定されていません（C2〜${String.fromCharCode(67 + MAX_RESEARCH_KEYWORDS - 1)}2セル）`
+    );
   }
 
   return {
-    keywords: [keyword],
+    keywords,
     connpassApiKey,
     lineChannelAccessToken,
   };
@@ -237,10 +249,6 @@ function formatEventMessage(event: ConnpassEvent): string {
     message += `📍 ${event.place}\n`;
   }
 
-  if (event.accepted !== undefined && event.limit !== undefined) {
-    message += `👥 参加者: ${event.accepted}/${event.limit}人\n`;
-  }
-
   message += `🔗 ${event.url}`;
 
   return message;
@@ -271,6 +279,37 @@ function filterRecentlyUpdatedEvents(events: ConnpassEvent[]): ConnpassEvent[] {
   });
 
   return filteredEvents;
+}
+
+// --- 開催日時が未来のイベントのみをフィルタリング ---
+function filterFutureEvents(events: ConnpassEvent[]): ConnpassEvent[] {
+  const now = new Date();
+
+  console.log(
+    `現在時刻: ${Utilities.formatDate(now, TIME_FILTERING.TIMEZONE, 'yyyy/MM/dd HH:mm:ss')}`
+  );
+
+  const futureEvents = events.filter(event => {
+    const startedAt = new Date(event.started_at);
+    const isFuture = startedAt > now;
+
+    if (isFuture) {
+      console.log(
+        `✓ 未来のイベント: "${event.title}" (開催: ${Utilities.formatDate(startedAt, TIME_FILTERING.TIMEZONE, 'yyyy/MM/dd HH:mm:ss')})`
+      );
+    } else {
+      console.log(
+        `  過去のイベントをスキップ: "${event.title}" (開催: ${Utilities.formatDate(startedAt, TIME_FILTERING.TIMEZONE, 'yyyy/MM/dd HH:mm:ss')})`
+      );
+    }
+
+    return isFuture;
+  });
+
+  console.log(
+    `${events.length}件のイベントのうち、${futureEvents.length}件が未来のイベントです`
+  );
+  return futureEvents;
 }
 
 // --- 複数イベントをまとめてフォーマット ---
@@ -337,7 +376,7 @@ function copyEventsFromPreviousMonth(
     }
 
     // 前の月のシートからデータを取得（2行目以降）
-    const dataRange = previousSheet.getRange(2, 1, lastRow - 1, 5);
+    const dataRange = previousSheet.getRange(2, 1, lastRow - 1, 6);
     const values = dataRange.getValues();
 
     // 現在の年月を取得（YYYY-MM形式）
@@ -355,6 +394,7 @@ function copyEventsFromPreviousMonth(
       const title = row[EVENT_SHEET_COLUMNS.TITLE - 1];
       const startDateStr = row[EVENT_SHEET_COLUMNS.START_DATE - 1];
       const url = row[EVENT_SHEET_COLUMNS.URL - 1];
+      const place = row[EVENT_SHEET_COLUMNS.PLACE - 1];
       const keyword = row[EVENT_SHEET_COLUMNS.KEYWORD - 1];
 
       // 開催日時が文字列の場合、Dateオブジェクトに変換
@@ -410,6 +450,9 @@ function copyEventsFromPreviousMonth(
           );
         newSheet.getRange(newRowIndex, EVENT_SHEET_COLUMNS.URL).setValue(url);
         newSheet
+          .getRange(newRowIndex, EVENT_SHEET_COLUMNS.PLACE)
+          .setValue(place || '');
+        newSheet
           .getRange(newRowIndex, EVENT_SHEET_COLUMNS.NOTIFIED_DATE)
           .setValue(
             Utilities.formatDate(
@@ -423,7 +466,7 @@ function copyEventsFromPreviousMonth(
           .setValue(keyword);
 
         // 枠線を設定
-        const rowRange = newSheet.getRange(newRowIndex, 1, 1, 5);
+        const rowRange = newSheet.getRange(newRowIndex, 1, 1, 6);
         rowRange.setBorder(true, true, true, true, true, true);
 
         copiedCount++;
@@ -463,17 +506,18 @@ function createOrGetYearMonthSheet(): GoogleAppsScript.Spreadsheet.Sheet {
     sheet.getRange(1, EVENT_SHEET_COLUMNS.TITLE).setValue('タイトル');
     sheet.getRange(1, EVENT_SHEET_COLUMNS.START_DATE).setValue('開催日時');
     sheet.getRange(1, EVENT_SHEET_COLUMNS.URL).setValue('URL');
+    sheet.getRange(1, EVENT_SHEET_COLUMNS.PLACE).setValue('開催場所');
     sheet.getRange(1, EVENT_SHEET_COLUMNS.NOTIFIED_DATE).setValue('通知日時');
     sheet.getRange(1, EVENT_SHEET_COLUMNS.KEYWORD).setValue('検索キーワード');
 
     // ヘッダー行の書式設定
-    const headerRange = sheet.getRange(1, 1, 1, 5);
+    const headerRange = sheet.getRange(1, 1, 1, 6);
     headerRange.setFontWeight('bold');
     headerRange.setBackground('#e8f0fe');
     headerRange.setBorder(true, true, true, true, true, true);
 
     // 列幅の自動調整
-    sheet.autoResizeColumns(1, 5);
+    sheet.autoResizeColumns(1, 6);
 
     console.log(`年月シート "${sheetName}" を作成しました`);
 
@@ -569,6 +613,7 @@ function addEventToSheet(
       )
     );
   sheet.getRange(newRow, EVENT_SHEET_COLUMNS.URL).setValue(event.url);
+  sheet.getRange(newRow, EVENT_SHEET_COLUMNS.PLACE).setValue(event.place || '');
   sheet
     .getRange(newRow, EVENT_SHEET_COLUMNS.NOTIFIED_DATE)
     .setValue(
@@ -577,7 +622,7 @@ function addEventToSheet(
   sheet.getRange(newRow, EVENT_SHEET_COLUMNS.KEYWORD).setValue(keyword);
 
   // 枠線を設定
-  const rowRange = sheet.getRange(newRow, 1, 1, 5);
+  const rowRange = sheet.getRange(newRow, 1, 1, 6);
   rowRange.setBorder(true, true, true, true, true, true);
 
   console.log(
@@ -613,10 +658,13 @@ function main(): void {
           `"${keyword}" で ${events.length}件のイベントが見つかりました`
         );
 
+        // 未来のイベントのみフィルタリング
+        const futureEvents = filterFutureEvents(events);
+
         // 過去1時間以内に更新されたイベントのみフィルタリング
-        const recentlyUpdatedEvents = filterRecentlyUpdatedEvents(events);
+        const recentlyUpdatedEvents = filterRecentlyUpdatedEvents(futureEvents);
         console.log(
-          `"${keyword}" で ${recentlyUpdatedEvents.length}件の過去1時間以内に更新されたイベントが見つかりました`
+          `"${keyword}" で ${recentlyUpdatedEvents.length}件の過去1時間以内に更新された未来のイベントが見つかりました`
         );
 
         // 新規イベントと既通知イベントを分類
@@ -817,8 +865,30 @@ function testEvents(
     console.log(`"${keyword}" で ${events.length}件のイベントが見つかりました`);
 
     if (events.length > 0) {
+      // 未来のイベントのみフィルタリング
+      const futureEvents = filterFutureEvents(events);
+
+      if (futureEvents.length === 0) {
+        console.log('未来のイベントが見つからないため、処理を終了します');
+
+        try {
+          const ui = SpreadsheetApp.getUi();
+          ui.alert(
+            '統合テスト結果',
+            `検索結果に未来のイベントがありませんでした（キーワード: ${keyword}）`,
+            ui.ButtonSet.OK
+          );
+        } catch (uiError) {
+          console.log('UI表示エラー:', uiError);
+        }
+        return;
+      }
+
       // 指定件数分のイベントを処理
-      const testEvents = events.slice(0, Math.min(events.length, maxEvents));
+      const testEvents = futureEvents.slice(
+        0,
+        Math.min(futureEvents.length, maxEvents)
+      );
       console.log(`テスト対象イベント: ${testEvents.length}件`);
 
       // 新規イベントと既通知イベントを分類
@@ -892,6 +962,7 @@ function testEvents(
         const resultMessage =
           `統合テスト完了\n` +
           `検索結果: ${events.length}件\n` +
+          `未来のイベント: ${futureEvents.length}件\n` +
           `処理対象: ${testEvents.length}件\n` +
           `新規追加: ${newEvents.length}件\n` +
           `既通知済み: ${alreadyNotifiedEvents.length}件\n` +
@@ -943,25 +1014,43 @@ function initializeSpreadsheet(): void {
     // 1行目: ヘッダー
     sheet.getRange(1, 1).setValue('Connpass APIキー');
     sheet.getRange(1, 2).setValue('LINE Channel Access Token');
-    sheet.getRange(1, 3).setValue('検索キーワード');
+
+    // 動的にキーワード列を作成
+    for (let i = 0; i < MAX_RESEARCH_KEYWORDS; i++) {
+      const columnIndex = SPREADSHEET_COLUMNS.KEYWORDS_START + i;
+      const keywordNumber = i + 1;
+      sheet.getRange(1, columnIndex).setValue(`検索キーワード${keywordNumber}`);
+    }
 
     // 2行目: 全て空のままにして、ユーザーが直接入力できるようにする
 
     // ヘッダー行の書式設定（1行目）
-    const headerRange = sheet.getRange(1, 1, 1, 3);
+    const totalColumns =
+      SPREADSHEET_COLUMNS.KEYWORDS_START + MAX_RESEARCH_KEYWORDS - 1;
+    const headerRange = sheet.getRange(1, 1, 1, totalColumns);
     headerRange.setFontWeight('bold');
     headerRange.setBackground('#e8f0fe');
 
     // セルにコメントを追加（背景色は設定しない）
     sheet.getRange(2, 1).setNote('Connpass APIキーを入力してください');
     sheet.getRange(2, 2).setNote('LINE Channel Access Tokenを入力してください');
-    sheet.getRange(2, 3).setNote('検索キーワードを入力してください');
+
+    // キーワード列のコメントを動的に追加
+    for (let i = 0; i < MAX_RESEARCH_KEYWORDS; i++) {
+      const columnIndex = SPREADSHEET_COLUMNS.KEYWORDS_START + i;
+      const keywordNumber = i + 1;
+      sheet
+        .getRange(2, columnIndex)
+        .setNote(
+          `検索キーワード${keywordNumber}を入力してください（空欄でも可）`
+        );
+    }
 
     // 列幅の自動調整
-    sheet.autoResizeColumns(1, 3);
+    sheet.autoResizeColumns(1, totalColumns);
 
     // 枠線の設定（2行分）
-    const dataRange = sheet.getRange(1, 1, 2, 3);
+    const dataRange = sheet.getRange(1, 1, 2, totalColumns);
     dataRange.setBorder(true, true, true, true, true, true);
 
     // 説明の追加
@@ -973,15 +1062,34 @@ function initializeSpreadsheet(): void {
     sheet
       .getRange(instructionStartRow + 2, 1)
       .setValue('• B2: LINE Channel Access Token');
-    sheet.getRange(instructionStartRow + 3, 1).setValue('• C2: 検索キーワード');
 
-    const instructionRange = sheet.getRange(instructionStartRow, 1, 4, 1);
+    // キーワードの説明を動的に追加
+    for (let i = 0; i < MAX_RESEARCH_KEYWORDS; i++) {
+      const columnLetter = String.fromCharCode(67 + i); // C, D, E...
+      const keywordNumber = i + 1;
+      sheet
+        .getRange(instructionStartRow + 3 + i, 1)
+        .setValue(
+          `• ${columnLetter}2: 検索キーワード${keywordNumber}（空欄でも可）`
+        );
+    }
+
+    const instructionRowCount = 3 + MAX_RESEARCH_KEYWORDS;
+    const instructionRange = sheet.getRange(
+      instructionStartRow,
+      1,
+      instructionRowCount,
+      1
+    );
     instructionRange.setFontStyle('italic');
     instructionRange.setFontColor('#666666');
 
     console.log('スプレッドシートの初期化が完了しました');
     console.log(
       'A2セルにConnpass APIキー、B2セルにLINE Channel Access Tokenを入力してください。'
+    );
+    console.log(
+      `C2〜${String.fromCharCode(67 + MAX_RESEARCH_KEYWORDS - 1)}2セルに検索キーワードを入力してください（複数可、空欄でも可）。`
     );
   } catch (error) {
     console.error('スプレッドシート初期化エラー:', error);

@@ -38,6 +38,9 @@ export const LINE_API_BASE_URL = 'https://api.line.me/v2/bot/message/broadcast';
 // 一度に表示するイベントの最大数
 export const MAX_EVENTS_PER_MESSAGE = 5;
 
+// 検索キーワードの最大数
+export const MAX_RESEARCH_KEYWORDS = 2;
+
 // 保存する既知のイベントIDの最大数
 export const MAX_KNOWN_EVENT_IDS = 1000;
 
@@ -48,16 +51,17 @@ export const API_CALL_DELAY = 1000;
 export const SPREADSHEET_COLUMNS = {
   CONNPASS_API_KEY: 1, // A列: Connpass APIキー
   LINE_CHANNEL_ACCESS_TOKEN: 2, // B列: LINE Channel Access Token
-  KEYWORDS: 3, // C列: キーワード
+  KEYWORDS_START: 3, // C列以降: 検索キーワード (C, D, E...)
 } as const;
 
 // 年月シートの列定義
 export const EVENT_SHEET_COLUMNS = {
   TITLE: 1, // A列: タイトル
   START_DATE: 2, // B列: 開催日時
-  URL: 3, // C列: URL
-  NOTIFIED_DATE: 4, // D列: 通知日時
-  KEYWORD: 5, // E列: 検索キーワード
+  PLACE: 3, // C列: 開催場所
+  URL: 4, // D列: URL
+  NOTIFIED_DATE: 5, // E列: 通知日時
+  KEYWORD: 6, // F列: 検索キーワード
 } as const;
 
 // スプレッドシートの行定義
