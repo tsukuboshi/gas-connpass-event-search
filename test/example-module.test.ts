@@ -75,9 +75,10 @@ describe('connpass-event-search', () => {
     it('イベントシートの列定義が正しい', () => {
       expect(EVENT_SHEET_COLUMNS.TITLE).toBe(1);
       expect(EVENT_SHEET_COLUMNS.START_DATE).toBe(2);
-      expect(EVENT_SHEET_COLUMNS.URL).toBe(3);
-      expect(EVENT_SHEET_COLUMNS.NOTIFIED_DATE).toBe(4);
-      expect(EVENT_SHEET_COLUMNS.KEYWORD).toBe(5);
+      expect(EVENT_SHEET_COLUMNS.PLACE).toBe(3);
+      expect(EVENT_SHEET_COLUMNS.URL).toBe(4);
+      expect(EVENT_SHEET_COLUMNS.NOTIFIED_DATE).toBe(5);
+      expect(EVENT_SHEET_COLUMNS.KEYWORD).toBe(6);
     });
 
     it('列番号が重複していない', () => {
@@ -188,6 +189,88 @@ describe('connpass-event-search', () => {
 
       expect(yearMonth).toBe('2024-02');
       expect(yearMonth.length).toBe(7);
+    });
+  });
+
+  describe('未来イベントフィルタリング機能のテスト', () => {
+    it('現在時刻との比較ロジックが正しく動作する', () => {
+      const now = new Date('2025-01-08T15:00:00+09:00');
+
+      // 未来のイベント
+      const futureEvent = new Date('2025-01-15T19:00:00+09:00');
+      const isFuture = futureEvent > now;
+
+      // 過去のイベント
+      const pastEvent = new Date('2025-01-05T18:00:00+09:00');
+      const isPast = pastEvent <= now;
+
+      expect(isFuture).toBe(true);
+      expect(isPast).toBe(true);
+    });
+
+    it('イベントの開催日時判定が正しく動作する', () => {
+      // モック現在時刻: 2025年1月8日 15:00
+      const mockNow = new Date('2025-01-08T15:00:00+09:00');
+
+      const testCases = [
+        {
+          eventDate: '2025-01-08T16:00:00+09:00', // 1時間後
+          expected: true,
+          description: '1時間後のイベント',
+        },
+        {
+          eventDate: '2025-01-08T14:00:00+09:00', // 1時間前
+          expected: false,
+          description: '1時間前のイベント',
+        },
+        {
+          eventDate: '2025-01-15T19:00:00+09:00', // 1週間後
+          expected: true,
+          description: '1週間後のイベント',
+        },
+        {
+          eventDate: '2025-01-01T10:00:00+09:00', // 1週間前
+          expected: false,
+          description: '1週間前のイベント',
+        },
+      ];
+
+      testCases.forEach(({ eventDate, expected }) => {
+        const startedAt = new Date(eventDate);
+        const isFuture = startedAt > mockNow;
+        expect(isFuture).toBe(expected);
+      });
+    });
+
+    it('日本時間（JST）での時刻比較が正しく動作する', () => {
+      // 日本時間での時刻比較テスト
+      const jstNow = new Date('2025-01-08T15:00:00+09:00');
+      const jstFuture = new Date('2025-01-08T19:00:00+09:00');
+      const jstPast = new Date('2025-01-08T10:00:00+09:00');
+
+      expect(jstFuture > jstNow).toBe(true);
+      expect(jstPast > jstNow).toBe(false);
+      expect(jstNow > jstNow).toBe(false); // 同じ時刻
+    });
+
+    it('イベントフィルタリングの配列操作が正しく動作する', () => {
+      const mockNow = new Date('2025-01-08T15:00:00+09:00');
+
+      const mockEvents = [
+        { title: '未来イベント1', started_at: '2025-01-10T19:00:00+09:00' },
+        { title: '過去イベント1', started_at: '2025-01-05T18:00:00+09:00' },
+        { title: '未来イベント2', started_at: '2025-01-15T20:00:00+09:00' },
+        { title: '過去イベント2', started_at: '2025-01-07T17:00:00+09:00' },
+      ];
+
+      const futureEvents = mockEvents.filter(event => {
+        const startedAt = new Date(event.started_at);
+        return startedAt > mockNow;
+      });
+
+      expect(futureEvents).toHaveLength(2);
+      expect(futureEvents[0].title).toBe('未来イベント1');
+      expect(futureEvents[1].title).toBe('未来イベント2');
     });
   });
 

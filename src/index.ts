@@ -249,10 +249,6 @@ function formatEventMessage(event: ConnpassEvent): string {
     message += `📍 ${event.place}\n`;
   }
 
-  if (event.accepted !== undefined && event.limit !== undefined) {
-    message += `👥 参加者: ${event.accepted}/${event.limit}人\n`;
-  }
-
   message += `🔗 ${event.url}`;
 
   return message;
@@ -283,6 +279,37 @@ function filterRecentlyUpdatedEvents(events: ConnpassEvent[]): ConnpassEvent[] {
   });
 
   return filteredEvents;
+}
+
+// --- 開催日時が未来のイベントのみをフィルタリング ---
+function filterFutureEvents(events: ConnpassEvent[]): ConnpassEvent[] {
+  const now = new Date();
+
+  console.log(
+    `現在時刻: ${Utilities.formatDate(now, TIME_FILTERING.TIMEZONE, 'yyyy/MM/dd HH:mm:ss')}`
+  );
+
+  const futureEvents = events.filter(event => {
+    const startedAt = new Date(event.started_at);
+    const isFuture = startedAt > now;
+
+    if (isFuture) {
+      console.log(
+        `✓ 未来のイベント: "${event.title}" (開催: ${Utilities.formatDate(startedAt, TIME_FILTERING.TIMEZONE, 'yyyy/MM/dd HH:mm:ss')})`
+      );
+    } else {
+      console.log(
+        `  過去のイベントをスキップ: "${event.title}" (開催: ${Utilities.formatDate(startedAt, TIME_FILTERING.TIMEZONE, 'yyyy/MM/dd HH:mm:ss')})`
+      );
+    }
+
+    return isFuture;
+  });
+
+  console.log(
+    `${events.length}件のイベントのうち、${futureEvents.length}件が未来のイベントです`
+  );
+  return futureEvents;
 }
 
 // --- 複数イベントをまとめてフォーマット ---
@@ -349,7 +376,7 @@ function copyEventsFromPreviousMonth(
     }
 
     // 前の月のシートからデータを取得（2行目以降）
-    const dataRange = previousSheet.getRange(2, 1, lastRow - 1, 5);
+    const dataRange = previousSheet.getRange(2, 1, lastRow - 1, 6);
     const values = dataRange.getValues();
 
     // 現在の年月を取得（YYYY-MM形式）
@@ -367,6 +394,7 @@ function copyEventsFromPreviousMonth(
       const title = row[EVENT_SHEET_COLUMNS.TITLE - 1];
       const startDateStr = row[EVENT_SHEET_COLUMNS.START_DATE - 1];
       const url = row[EVENT_SHEET_COLUMNS.URL - 1];
+      const place = row[EVENT_SHEET_COLUMNS.PLACE - 1];
       const keyword = row[EVENT_SHEET_COLUMNS.KEYWORD - 1];
 
       // 開催日時が文字列の場合、Dateオブジェクトに変換
@@ -422,6 +450,9 @@ function copyEventsFromPreviousMonth(
           );
         newSheet.getRange(newRowIndex, EVENT_SHEET_COLUMNS.URL).setValue(url);
         newSheet
+          .getRange(newRowIndex, EVENT_SHEET_COLUMNS.PLACE)
+          .setValue(place || '');
+        newSheet
           .getRange(newRowIndex, EVENT_SHEET_COLUMNS.NOTIFIED_DATE)
           .setValue(
             Utilities.formatDate(
@@ -435,7 +466,7 @@ function copyEventsFromPreviousMonth(
           .setValue(keyword);
 
         // 枠線を設定
-        const rowRange = newSheet.getRange(newRowIndex, 1, 1, 5);
+        const rowRange = newSheet.getRange(newRowIndex, 1, 1, 6);
         rowRange.setBorder(true, true, true, true, true, true);
 
         copiedCount++;
@@ -475,17 +506,18 @@ function createOrGetYearMonthSheet(): GoogleAppsScript.Spreadsheet.Sheet {
     sheet.getRange(1, EVENT_SHEET_COLUMNS.TITLE).setValue('タイトル');
     sheet.getRange(1, EVENT_SHEET_COLUMNS.START_DATE).setValue('開催日時');
     sheet.getRange(1, EVENT_SHEET_COLUMNS.URL).setValue('URL');
+    sheet.getRange(1, EVENT_SHEET_COLUMNS.PLACE).setValue('開催場所');
     sheet.getRange(1, EVENT_SHEET_COLUMNS.NOTIFIED_DATE).setValue('通知日時');
     sheet.getRange(1, EVENT_SHEET_COLUMNS.KEYWORD).setValue('検索キーワード');
 
     // ヘッダー行の書式設定
-    const headerRange = sheet.getRange(1, 1, 1, 5);
+    const headerRange = sheet.getRange(1, 1, 1, 6);
     headerRange.setFontWeight('bold');
     headerRange.setBackground('#e8f0fe');
     headerRange.setBorder(true, true, true, true, true, true);
 
     // 列幅の自動調整
-    sheet.autoResizeColumns(1, 5);
+    sheet.autoResizeColumns(1, 6);
 
     console.log(`年月シート "${sheetName}" を作成しました`);
 
@@ -581,6 +613,7 @@ function addEventToSheet(
       )
     );
   sheet.getRange(newRow, EVENT_SHEET_COLUMNS.URL).setValue(event.url);
+  sheet.getRange(newRow, EVENT_SHEET_COLUMNS.PLACE).setValue(event.place || '');
   sheet
     .getRange(newRow, EVENT_SHEET_COLUMNS.NOTIFIED_DATE)
     .setValue(
@@ -589,7 +622,7 @@ function addEventToSheet(
   sheet.getRange(newRow, EVENT_SHEET_COLUMNS.KEYWORD).setValue(keyword);
 
   // 枠線を設定
-  const rowRange = sheet.getRange(newRow, 1, 1, 5);
+  const rowRange = sheet.getRange(newRow, 1, 1, 6);
   rowRange.setBorder(true, true, true, true, true, true);
 
   console.log(
@@ -625,10 +658,13 @@ function main(): void {
           `"${keyword}" で ${events.length}件のイベントが見つかりました`
         );
 
+        // 未来のイベントのみフィルタリング
+        const futureEvents = filterFutureEvents(events);
+
         // 過去1時間以内に更新されたイベントのみフィルタリング
-        const recentlyUpdatedEvents = filterRecentlyUpdatedEvents(events);
+        const recentlyUpdatedEvents = filterRecentlyUpdatedEvents(futureEvents);
         console.log(
-          `"${keyword}" で ${recentlyUpdatedEvents.length}件の過去1時間以内に更新されたイベントが見つかりました`
+          `"${keyword}" で ${recentlyUpdatedEvents.length}件の過去1時間以内に更新された未来のイベントが見つかりました`
         );
 
         // 新規イベントと既通知イベントを分類
@@ -829,8 +865,30 @@ function testEvents(
     console.log(`"${keyword}" で ${events.length}件のイベントが見つかりました`);
 
     if (events.length > 0) {
+      // 未来のイベントのみフィルタリング
+      const futureEvents = filterFutureEvents(events);
+
+      if (futureEvents.length === 0) {
+        console.log('未来のイベントが見つからないため、処理を終了します');
+
+        try {
+          const ui = SpreadsheetApp.getUi();
+          ui.alert(
+            '統合テスト結果',
+            `検索結果に未来のイベントがありませんでした（キーワード: ${keyword}）`,
+            ui.ButtonSet.OK
+          );
+        } catch (uiError) {
+          console.log('UI表示エラー:', uiError);
+        }
+        return;
+      }
+
       // 指定件数分のイベントを処理
-      const testEvents = events.slice(0, Math.min(events.length, maxEvents));
+      const testEvents = futureEvents.slice(
+        0,
+        Math.min(futureEvents.length, maxEvents)
+      );
       console.log(`テスト対象イベント: ${testEvents.length}件`);
 
       // 新規イベントと既通知イベントを分類
@@ -904,6 +962,7 @@ function testEvents(
         const resultMessage =
           `統合テスト完了\n` +
           `検索結果: ${events.length}件\n` +
+          `未来のイベント: ${futureEvents.length}件\n` +
           `処理対象: ${testEvents.length}件\n` +
           `新規追加: ${newEvents.length}件\n` +
           `既通知済み: ${alreadyNotifiedEvents.length}件\n` +
