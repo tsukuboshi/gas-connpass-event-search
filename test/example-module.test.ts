@@ -69,7 +69,7 @@ describe('connpass-event-search', () => {
     it('設定シートの列定義が正しい', () => {
       expect(SPREADSHEET_COLUMNS.CONNPASS_API_KEY).toBe(1);
       expect(SPREADSHEET_COLUMNS.LINE_CHANNEL_ACCESS_TOKEN).toBe(2);
-      expect(SPREADSHEET_COLUMNS.KEYWORDS).toBe(3);
+      expect(SPREADSHEET_COLUMNS.KEYWORDS_START).toBe(3);
     });
 
     it('イベントシートの列定義が正しい', () => {
