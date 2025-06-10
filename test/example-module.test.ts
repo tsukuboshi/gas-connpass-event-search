@@ -138,6 +138,57 @@ describe('connpass-event-search', () => {
         expect(formatted).toBe(expected);
       });
     });
+
+    it('前の月のシート名が正しく生成される', () => {
+      const currentDate = new Date('2024-02-15T10:30:00Z');
+      const previousMonth = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth() - 1,
+        1
+      );
+      const year = previousMonth.getFullYear();
+      const month = String(previousMonth.getMonth() + 1).padStart(2, '0');
+      const sheetName = `${year}${month}`;
+
+      expect(sheetName).toBe('202401');
+      expect(sheetName).toMatch(/^\d{6}$/);
+    });
+
+    it('年を跨ぐ前の月のシート名が正しく生成される', () => {
+      const currentDate = new Date('2024-01-15T10:30:00Z');
+      const previousMonth = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth() - 1,
+        1
+      );
+      const year = previousMonth.getFullYear();
+      const month = String(previousMonth.getMonth() + 1).padStart(2, '0');
+      const sheetName = `${year}${month}`;
+
+      expect(sheetName).toBe('202312');
+      expect(year).toBe(2023);
+    });
+  });
+
+  describe('イベントコピー機能のテスト', () => {
+    it('イベントの開催月判定が正しく動作する', () => {
+      const eventDate = new Date('2024/02/15 19:00');
+      const year = eventDate.getFullYear();
+      const month = String(eventDate.getMonth() + 1).padStart(2, '0');
+      const eventYearMonth = `${year}-${month}`;
+
+      expect(eventYearMonth).toBe('2024-02');
+      expect(eventYearMonth).toMatch(/^\d{4}-\d{2}$/);
+    });
+
+    it('シート名から年月形式への変換が正しく動作する', () => {
+      const sheetName = '202402';
+      const yearMonth =
+        sheetName.substring(0, 4) + '-' + sheetName.substring(4, 6);
+
+      expect(yearMonth).toBe('2024-02');
+      expect(yearMonth.length).toBe(7);
+    });
   });
 
   describe('イベント管理機能のテスト', () => {

@@ -306,6 +306,149 @@ function getCurrentYearMonthSheetName(): string {
   return `${year}${month}`;
 }
 
+// 前の月のシート名を取得
+function getPreviousYearMonthSheetName(): string {
+  const now = new Date();
+  const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const year = previousMonth.getFullYear();
+  const month = String(previousMonth.getMonth() + 1).padStart(2, '0');
+  return `${year}${month}`;
+}
+
+// 前の月のシートから次の月に開催予定のイベントをコピー
+function copyEventsFromPreviousMonth(
+  newSheet: GoogleAppsScript.Spreadsheet.Sheet,
+  currentSheetName: string
+): number {
+  try {
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    const previousSheetName = getPreviousYearMonthSheetName();
+    const previousSheet = spreadsheet.getSheetByName(previousSheetName);
+
+    if (!previousSheet) {
+      console.log(`前の月のシート "${previousSheetName}" が存在しません`);
+      return 0;
+    }
+
+    const lastRow = previousSheet.getLastRow();
+    if (lastRow <= 1) {
+      console.log(`前の月のシート "${previousSheetName}" にデータがありません`);
+      return 0;
+    }
+
+    // 前の月のシートからデータを取得（2行目以降）
+    const dataRange = previousSheet.getRange(2, 1, lastRow - 1, 5);
+    const values = dataRange.getValues();
+
+    // 現在の年月を取得（YYYY-MM形式）
+    const currentYearMonth =
+      currentSheetName.substring(0, 4) + '-' + currentSheetName.substring(4, 6);
+
+    let copiedCount = 0;
+
+    console.log(
+      `前の月のシート "${previousSheetName}" から ${values.length}件のイベントをチェック中...`
+    );
+    console.log(`対象年月: ${currentYearMonth}`);
+
+    values.forEach((row, index) => {
+      const title = row[EVENT_SHEET_COLUMNS.TITLE - 1];
+      const startDateStr = row[EVENT_SHEET_COLUMNS.START_DATE - 1];
+      const url = row[EVENT_SHEET_COLUMNS.URL - 1];
+      const keyword = row[EVENT_SHEET_COLUMNS.KEYWORD - 1];
+
+      // 開催日時が文字列の場合、Dateオブジェクトに変換
+      let startDate: Date;
+      if (startDateStr instanceof Date) {
+        startDate = startDateStr;
+      } else if (
+        typeof startDateStr === 'string' &&
+        startDateStr.trim() !== ''
+      ) {
+        // "YYYY/MM/DD HH:mm" 形式の文字列をDateオブジェクトに変換
+        startDate = new Date(startDateStr);
+      } else {
+        console.log(
+          `行 ${index + 2}: 開催日時が無効なため、スキップします - ${startDateStr}`
+        );
+        return;
+      }
+
+      // 開催日時が現在の年月に該当するかチェック
+      if (isNaN(startDate.getTime())) {
+        console.log(
+          `行 ${index + 2}: 開催日時の解析に失敗したため、スキップします - ${startDateStr}`
+        );
+        return;
+      }
+
+      const eventYearMonth = Utilities.formatDate(
+        startDate,
+        TIME_FILTERING.TIMEZONE,
+        'yyyy-MM'
+      );
+
+      if (eventYearMonth === currentYearMonth) {
+        console.log(
+          `✓ コピー対象: "${title}" (開催: ${Utilities.formatDate(startDate, TIME_FILTERING.TIMEZONE, 'yyyy/MM/dd HH:mm')})`
+        );
+
+        // 新しいシートに追加
+        const newRowIndex = newSheet.getLastRow() + 1;
+
+        newSheet
+          .getRange(newRowIndex, EVENT_SHEET_COLUMNS.TITLE)
+          .setValue(title);
+        newSheet
+          .getRange(newRowIndex, EVENT_SHEET_COLUMNS.START_DATE)
+          .setValue(
+            Utilities.formatDate(
+              startDate,
+              TIME_FILTERING.TIMEZONE,
+              'yyyy/MM/dd HH:mm'
+            )
+          );
+        newSheet.getRange(newRowIndex, EVENT_SHEET_COLUMNS.URL).setValue(url);
+        newSheet
+          .getRange(newRowIndex, EVENT_SHEET_COLUMNS.NOTIFIED_DATE)
+          .setValue(
+            Utilities.formatDate(
+              new Date(),
+              TIME_FILTERING.TIMEZONE,
+              'yyyy/MM/dd HH:mm:ss'
+            ) + ' (前月から引継)'
+          );
+        newSheet
+          .getRange(newRowIndex, EVENT_SHEET_COLUMNS.KEYWORD)
+          .setValue(keyword);
+
+        // 枠線を設定
+        const rowRange = newSheet.getRange(newRowIndex, 1, 1, 5);
+        rowRange.setBorder(true, true, true, true, true, true);
+
+        copiedCount++;
+      } else {
+        console.log(
+          `  スキップ: "${title}" (開催: ${eventYearMonth}) - 対象外の年月`
+        );
+      }
+    });
+
+    if (copiedCount > 0) {
+      console.log(
+        `前の月のシートから ${copiedCount}件のイベントをコピーしました`
+      );
+    } else {
+      console.log('前の月のシートから該当するイベントはありませんでした');
+    }
+
+    return copiedCount;
+  } catch (error) {
+    console.error('前の月のイベントコピー中にエラーが発生しました:', error);
+    return 0;
+  }
+}
+
 function createOrGetYearMonthSheet(): GoogleAppsScript.Spreadsheet.Sheet {
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   const sheetName = getCurrentYearMonthSheetName();
@@ -333,6 +476,26 @@ function createOrGetYearMonthSheet(): GoogleAppsScript.Spreadsheet.Sheet {
     sheet.autoResizeColumns(1, 5);
 
     console.log(`年月シート "${sheetName}" を作成しました`);
+
+    // 前の月のシートが存在する場合のみ、該当するイベントをコピー
+    const previousSheetName = getPreviousYearMonthSheetName();
+    const previousSheet = spreadsheet.getSheetByName(previousSheetName);
+
+    if (previousSheet) {
+      console.log(
+        `前の月のシート "${previousSheetName}" が存在するため、該当イベントをコピーします`
+      );
+      const copiedCount = copyEventsFromPreviousMonth(sheet, sheetName);
+      if (copiedCount > 0) {
+        console.log(
+          `新規シート作成時に前の月から ${copiedCount}件のイベントを引き継ぎました`
+        );
+      }
+    } else {
+      console.log(
+        `前の月のシート "${previousSheetName}" が存在しないため、シートとヘッダーのみを作成しました`
+      );
+    }
   }
 
   return sheet;
