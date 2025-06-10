@@ -67,18 +67,18 @@ interface SpreadsheetConfig {
 function getConfigFromSheet(): SpreadsheetConfig {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
 
-  // A2: キーワード
-  const keywordRaw = sheet.getRange(2, SPREADSHEET_COLUMNS.KEYWORDS).getValue();
-
-  // B2: Connpass APIキー
+  // A2: Connpass APIキー
   const connpassApiKeyRaw = sheet
     .getRange(2, SPREADSHEET_COLUMNS.CONNPASS_API_KEY)
     .getValue();
 
-  // C2: LINE Channel Access Token
+  // B2: LINE Channel Access Token
   const lineChannelAccessTokenRaw = sheet
     .getRange(2, SPREADSHEET_COLUMNS.LINE_CHANNEL_ACCESS_TOKEN)
     .getValue();
+
+  // C2: キーワード
+  const keywordRaw = sheet.getRange(2, SPREADSHEET_COLUMNS.KEYWORDS).getValue();
 
   // 値のクリーニング
   const keyword = keywordRaw ? keywordRaw.toString().trim() : '';
@@ -101,16 +101,16 @@ function getConfigFromSheet(): SpreadsheetConfig {
   );
 
   // 必要な値が設定されているかチェック
-  if (!keyword || keyword === '') {
-    throw new Error('検索キーワードが設定されていません（A2セル）');
-  }
-
   if (!connpassApiKey || connpassApiKey === '') {
-    throw new Error('Connpass APIキーが設定されていません（B2セル）');
+    throw new Error('Connpass APIキーが設定されていません（A2セル）');
   }
 
   if (!lineChannelAccessToken || lineChannelAccessToken === '') {
-    throw new Error('LINE Channel Access Tokenが設定されていません（C2セル）');
+    throw new Error('LINE Channel Access Tokenが設定されていません（B2セル）');
+  }
+
+  if (!keyword || keyword === '') {
+    throw new Error('検索キーワードが設定されていません（C2セル）');
   }
 
   return {
@@ -941,13 +941,11 @@ function initializeSpreadsheet(): void {
     sheet.clear();
 
     // 1行目: ヘッダー
-    sheet.getRange(1, 1).setValue('検索キーワード');
-    sheet.getRange(1, 2).setValue('Connpass APIキー');
-    sheet.getRange(1, 3).setValue('LINE Channel Access Token');
+    sheet.getRange(1, 1).setValue('Connpass APIキー');
+    sheet.getRange(1, 2).setValue('LINE Channel Access Token');
+    sheet.getRange(1, 3).setValue('検索キーワード');
 
-    // 2行目: サンプルキーワードを設定
-    sheet.getRange(2, 1).setValue('typescript');
-    // B2とC2は空のままにして、ユーザーが直接入力できるようにする
+    // 2行目: 全て空のままにして、ユーザーが直接入力できるようにする
 
     // ヘッダー行の書式設定（1行目）
     const headerRange = sheet.getRange(1, 1, 1, 3);
@@ -955,9 +953,9 @@ function initializeSpreadsheet(): void {
     headerRange.setBackground('#e8f0fe');
 
     // セルにコメントを追加（背景色は設定しない）
-    sheet.getRange(2, 1).setNote('検索キーワードを入力してください');
-    sheet.getRange(2, 2).setNote('Connpass APIキーを入力してください');
-    sheet.getRange(2, 3).setNote('LINE Channel Access Tokenを入力してください');
+    sheet.getRange(2, 1).setNote('Connpass APIキーを入力してください');
+    sheet.getRange(2, 2).setNote('LINE Channel Access Tokenを入力してください');
+    sheet.getRange(2, 3).setNote('検索キーワードを入力してください');
 
     // 列幅の自動調整
     sheet.autoResizeColumns(1, 3);
@@ -969,13 +967,13 @@ function initializeSpreadsheet(): void {
     // 説明の追加
     const instructionStartRow = 4;
     sheet.getRange(instructionStartRow, 1).setValue('設定方法:');
-    sheet.getRange(instructionStartRow + 1, 1).setValue('• A2: 検索キーワード');
+    sheet
+      .getRange(instructionStartRow + 1, 1)
+      .setValue('• A2: Connpass APIキー');
     sheet
       .getRange(instructionStartRow + 2, 1)
-      .setValue('• B2: Connpass APIキー');
-    sheet
-      .getRange(instructionStartRow + 3, 1)
-      .setValue('• C2: LINE Channel Access Token');
+      .setValue('• B2: LINE Channel Access Token');
+    sheet.getRange(instructionStartRow + 3, 1).setValue('• C2: 検索キーワード');
 
     const instructionRange = sheet.getRange(instructionStartRow, 1, 4, 1);
     instructionRange.setFontStyle('italic');
@@ -983,7 +981,7 @@ function initializeSpreadsheet(): void {
 
     console.log('スプレッドシートの初期化が完了しました');
     console.log(
-      'B2セルにConnpass APIキー、C2セルにLINE Channel Access Tokenを入力してください。'
+      'A2セルにConnpass APIキー、B2セルにLINE Channel Access Tokenを入力してください。'
     );
   } catch (error) {
     console.error('スプレッドシート初期化エラー:', error);

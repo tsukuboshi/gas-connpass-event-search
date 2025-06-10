@@ -46,9 +46,9 @@ export const API_CALL_DELAY = 1000;
 
 // スプレッドシートの列定義
 export const SPREADSHEET_COLUMNS = {
-  KEYWORDS: 1, // A列: キーワード
-  CONNPASS_API_KEY: 2, // B列: Connpass APIキー
-  LINE_CHANNEL_ACCESS_TOKEN: 3, // C列: LINE Channel Access Token
+  CONNPASS_API_KEY: 1, // A列: Connpass APIキー
+  LINE_CHANNEL_ACCESS_TOKEN: 2, // B列: LINE Channel Access Token
+  KEYWORDS: 3, // C列: キーワード
 } as const;
 
 // 年月シートの列定義
